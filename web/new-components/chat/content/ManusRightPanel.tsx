@@ -439,20 +439,8 @@ const OutputRenderer: React.FC<{ output: ExecutionOutput; index: number }> = mem
             )}
             sandbox='allow-scripts allow-same-origin'
             className='w-full bg-white'
-            style={{ border: 'none', minHeight: 500 }}
-            onLoad={e => {
-              // Auto-resize iframe to content height
-              try {
-                const iframe = e.target as HTMLIFrameElement;
-                const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                if (doc?.body) {
-                  const height = Math.max(doc.body.scrollHeight, 500);
-                  iframe.style.height = `${Math.min(height, 1200)}px`;
-                }
-              } catch {
-                // Cross-origin restriction — keep default height
-              }
-            }}
+            style={{ border: 'none', maxHeight: 'calc(100vh - 400px)', minHeight: 300 }}
+            scrolling='auto'
           />
         </div>
       )}
@@ -1793,8 +1781,9 @@ const ManusRightPanel: React.FC<ManusRightPanelProps> = ({
                   ref={htmlPreviewRef}
                   srcDoc={srcDoc}
                   sandbox='allow-scripts allow-same-origin allow-modals'
-                  className='w-full flex-1 bg-white'
-                  style={{ border: 'none', minHeight: 600 }}
+                  className='w-full bg-white flex-1'
+                  style={{ border: 'none' }}
+                  scrolling='auto'
                 />
               );
             })()}

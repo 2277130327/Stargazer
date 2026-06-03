@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from dbgpt.agent.core.memory.gpts import GptsMemory
 
 REACT_AGENT_MEMORY_CACHE: Dict[str, "GptsMemory"] = {}
+# Track cancelled conversation tasks so the SSE generator stops promptly
+_cancelled_tasks: set = set()
 
 DEFAULT_SKILLS_DIR = SKILLS_DIR
 AUTO_DATA_MARKER_PATTERN = re.compile(
@@ -2549,6 +2551,9 @@ print(json.dumps(summary, ensure_ascii=False))
     storage_conv.save_to_storage()
     storage_conv.start_new_round()
     storage_conv.add_user_message(user_input)
+    # Save user message immediately so it's persisted even if the generator
+    # exits early (client disconnect, streaming error, etc.)
+    storage_conv.save_to_storage()
     context = AgentContext(
         conv_id=conv_id,
         gpts_app_code="react_agent",
@@ -2936,6 +2941,14 @@ Action Input: The JSON format of tool parameters
     while True:
         if agent_task.done() and stream_queue.empty():
             break
+        if dialogue.conv_uid in _cancelled_tasks:
+            _cancelled_tasks.discard(dialogue.conv_uid)
+            agent_task.cancel()
+            try:
+                yield _sse_event({"type": "done"})
+            except GeneratorExit:
+                pass
+            return
         try:
             event = await asyncio.wait_for(stream_queue.get(), timeout=0.1)
         except asyncio.TimeoutError:
@@ -3473,7 +3486,7 @@ async def chat_react_agent(
         dialogue.select_param,
         dialogue.model_name,
     )
-    dialogue.user_name = user_token.user_id if user_token else dialogue.user_name
+    dialogue.user_name = (user_token.user_name or user_token.user_id) if user_token else dialogue.user_name
     headers = {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -3497,3 +3510,15 @@ async def chat_react_agent(
             headers=headers,
             media_type="text/plain",
         )
+
+
+@router.post("/v1/chat/cancel/{conv_uid}")
+async def chat_cancel(conv_uid: str):
+    """Cancel a running conversation task by conv_uid.
+
+    The _react_agent_stream generator checks _cancelled_tasks in its main loop
+    and stops processing + cancels the asyncio agent task.
+    """
+    _cancelled_tasks.add(conv_uid)
+    logger.info("Cancelled task for conversation %s", conv_uid)
+    return {"success": True}

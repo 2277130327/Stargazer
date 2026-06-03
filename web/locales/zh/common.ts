@@ -541,4 +541,5 @@ export const CommonZh: Resources['translation'] = {
   user_group_required: '请选择用户组',
   yes: '是',
   no: '否',
+  platform_generating_answer: '平台正在生成回答...',
 } as const;

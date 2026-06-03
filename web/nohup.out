@@ -1,0 +1,55 @@
+[1;32m    ____  ____        ____ ____ _____[0m
+[1;32m   |  _ \| __ [0m[1;32m)[0m[1;32m      [0m[1;32m/[0m[1;32m ___|  _ \_   _|[0m
+[1;32m   | | | |  _ \ ____| |  _| |_[0m[1;32m)[0m[1;32m || |[0m
+[1;32m   | |_| | |_[0m[1;32m)[0m[1;32m |____| |_| |  __/ | |[0m
+[1;32m   |____/|____/      \____|_|    |_|[0m
+
+   [2m🚀 DB-GPT Quick Start[0m
+
+
+   +- - - - - - - - - - - - - - - - - - - - - - +
+   :   Profile:   [1mtuwan[0m                         :
+   :   Config:    [1m/Users/tuwan/[0m                 :
+   :   Workspace: [1m/Users/tuwan/.dbgpt/workspace[0m :
+   +- - - - - - - - - - - - - - - - - - - - - - +
+
+Traceback (most recent call last):
+  File "/Users/tuwan/java_project/Stargazer/.venv/bin/dbgpt", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/packages/dbgpt-core/src/dbgpt/cli/cli_scripts.py", line 345, in main
+    return cli()
+           ^^^^^
+  File "/Users/tuwan/java_project/Stargazer/.venv/lib/python3.11/site-packages/click/core.py", line 1161, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/.venv/lib/python3.11/site-packages/click/core.py", line 1082, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/.venv/lib/python3.11/site-packages/click/core.py", line 1697, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/.venv/lib/python3.11/site-packages/click/core.py", line 1697, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/.venv/lib/python3.11/site-packages/click/core.py", line 1443, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/.venv/lib/python3.11/site-packages/click/core.py", line 788, in invoke
+    return __callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/packages/dbgpt-app/src/dbgpt_app/_cli.py", line 94, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/packages/dbgpt-app/src/dbgpt_app/_cli.py", line 169, in start_webserver
+    run_webserver(resolved_config)
+  File "/Users/tuwan/java_project/Stargazer/packages/dbgpt-app/src/dbgpt_app/dbgpt_server.py", line 284, in run_webserver
+    param = load_config(config_file)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/packages/dbgpt-app/src/dbgpt_app/dbgpt_server.py", line 357, in load_config
+    cfg = ConfigurationManager.from_file(config_file)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tuwan/java_project/Stargazer/packages/dbgpt-core/src/dbgpt/util/configure/manager.py", line 325, in from_file
+    with open(file_path, "rb") as f:
+         ^^^^^^^^^^^^^^^^^^^^^
+IsADirectoryError: [Errno 21] Is a directory: '/Users/tuwan/'

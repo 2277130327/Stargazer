@@ -538,4 +538,5 @@ export const CommonEn = {
   user_group_required: 'Group is required',
   yes: 'Yes',
   no: 'No',
+  platform_generating_answer: 'The platform is generating the answer...',
 } as const;

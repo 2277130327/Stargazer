@@ -382,7 +382,7 @@ async def file_upload(
     for doc_file in doc_files:
         file_name = doc_file.filename
         custom_metadata = {
-            "user_name": user_token.user_id,
+            "user_name": user_token.user_name or user_token.user_id,
             "sys_code": sys_code,
             "conv_uid": conv_uid,
         }
@@ -419,7 +419,7 @@ async def file_upload(
                 chat_mode=chat_mode,
                 select_param=file_param,
                 model_name=model_name,
-                user_name=user_token.user_id,
+                user_name=user_token.user_name or user_token.user_id,
                 sys_code=sys_code,
             )
 
@@ -547,7 +547,7 @@ async def chat_prepare(
 ):
     logger.info(json.dumps(dialogue.__dict__))
     # dialogue.model_name = CFG.LLM_MODEL
-    dialogue.user_name = user_token.user_id if user_token else dialogue.user_name
+    dialogue.user_name = (user_token.user_name or user_token.user_id) if user_token else dialogue.user_name
     logger.info(f"chat_prepare:{dialogue}")
     ## check conv_uid
     chat: BaseChat = await get_chat_instance(dialogue)
@@ -555,7 +555,7 @@ async def chat_prepare(
     await chat.prepare()
 
     # Refresh messages
-    return Result.succ(get_hist_messages(dialogue.conv_uid, user_token.user_id))
+    return Result.succ(get_hist_messages(dialogue.conv_uid, user_token.user_name or user_token.user_id))
 
 
 @router.post("/v1/chat/completions")
@@ -568,7 +568,7 @@ async def chat_completions(
         f"chat_completions:{dialogue.chat_mode},{dialogue.select_param},"
         f"{dialogue.model_name}, timestamp={int(time.time() * 1000)}"
     )
-    dialogue.user_name = user_token.user_id if user_token else dialogue.user_name
+    dialogue.user_name = (user_token.user_name or user_token.user_id) if user_token else dialogue.user_name
     dialogue = adapt_native_app_model(dialogue)
 
     # Handle knowledge space selection from ext_info for normal chat mode

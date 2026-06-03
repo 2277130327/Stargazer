@@ -13,7 +13,7 @@ import ManusRightPanel, {
   PanelView,
 } from '@/new-components/chat/content/ManusRightPanel';
 import { MessagePart, ToolPart, ToolStatus } from '@/new-components/chat/content/OpenCodeSessionTurn';
-import { STORAGE_USERINFO_KEY } from '@/utils/constants/index';
+import { STORAGE_TOKEN_KEY, STORAGE_USERINFO_KEY } from '@/utils/constants/index';
 import axios from '@/utils/ctx-axios';
 import { sendSpacePostRequest } from '@/utils/request';
 import {
@@ -603,6 +603,8 @@ const Playground: NextPage = () => {
   // Track step IDs that belong to a terminate action so we can suppress them
   const terminatedStepIdsRef = useRef<Set<string>>(new Set());
   const preloadedFilePathRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
 
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -1427,7 +1429,7 @@ const Playground: NextPage = () => {
     const effectiveFile = overrideFile !== undefined ? overrideFile : uploadedFile;
     const effectiveSkill = overrideSkill !== undefined ? overrideSkill : selectedSkill;
     const effectiveDb = overrideDb !== undefined ? overrideDb : selectedDb;
-    if ((!inputQuery.trim() && !effectiveFile) || loading) return;
+    if ((!inputQuery.trim() && !effectiveFile) || loading || xhrRef.current) return;
 
     let finalQuery = inputQuery;
     const appCode = 'chat_react_agent';
@@ -1536,7 +1538,8 @@ const Playground: NextPage = () => {
     setStreamingSummary('');
     setActiveViewMsgId(responseId); // Auto-switch right panel to new round
 
-    const controller = new AbortController();
+    stopRequestedRef.current = false;
+    xhrRef.current = null; // Clear any stale XHR ref
     terminatedStepIdsRef.current.clear();
     setExecutionMap(prev => ({
       ...prev,
@@ -1551,38 +1554,13 @@ const Playground: NextPage = () => {
     setActiveMessageId(responseId);
 
     try {
-      const response = await fetch(`${process.env.API_BASE_URL ?? ''}/api/v1/chat/react-agent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          conv_uid: currentConvId,
-          chat_mode: chatMode,
-          model_name: model,
-          user_input: finalQuery,
-          temperature: 0.6,
-          max_new_tokens: 4000,
-          select_param: appCode === 'chat_react_agent' ? '' : appCode,
-          ext_info: {
-            ...(currentUploadedFilePath ? { file_path: currentUploadedFilePath } : {}),
-            ...(effectiveSkill ? { skill_id: effectiveSkill.id, skill_name: effectiveSkill.name } : {}),
-            ...(effectiveDb ? { database_name: effectiveDb.db_name, database_type: effectiveDb.db_type } : {}),
-            ...(selectedKnowledge
-              ? { knowledge_space_name: selectedKnowledge.name, knowledge_space_id: selectedKnowledge.id }
-              : {}),
-          },
-        }),
-        signal: controller.signal,
-      });
+      const token = localStorage.getItem(STORAGE_TOKEN_KEY);
 
-      if (!response.body) {
-        throw new Error('No response body');
-      }
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
+      let lastIndex = 0;
+      let xhrBuffer = '';
 
       const processEvent = (raw: string) => {
         if (!raw.startsWith('data:')) return;
@@ -1910,28 +1888,90 @@ const Playground: NextPage = () => {
         }
       };
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop() || '';
+      xhr.open('POST', `${process.env.API_BASE_URL ?? ''}/api/v1/chat/react-agent`);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      xhr.onprogress = () => {
+        const newText = xhr.responseText.substring(lastIndex);
+        lastIndex = xhr.responseText.length;
+        xhrBuffer += newText;
+        const parts = xhrBuffer.split('\n\n');
+        xhrBuffer = parts.pop() || '';
         parts.forEach(processEvent);
-      }
-      setLoading(false);
+      };
+
+      xhr.onload = () => {
+        if (xhrBuffer.trim()) {
+          const parts = xhrBuffer.split('\n\n');
+          xhrBuffer = parts.pop() || '';
+          parts.forEach(processEvent);
+        }
+        setLoading(false);
+        xhrRef.current = null;
+        window.dispatchEvent(new CustomEvent('conversation-created'));
+      };
+
+      xhr.onerror = () => {
+        setLoading(false);
+        xhrRef.current = null;
+        if (!stopRequestedRef.current) {
+          message.error('Network request failed');
+        }
+      };
+
+      xhr.onabort = () => {
+        setLoading(false);
+        xhrRef.current = null;
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const lastMsg = newMessages[newMessages.length - 1];
+          if (lastMsg && lastMsg.role === 'view') {
+            lastMsg.context = '任务已取消';
+            lastMsg.thinking = false;
+          }
+          return newMessages;
+        });
+        setExecutionMap(prev => {
+          const current = prev[responseId];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [responseId]: {
+              ...current,
+              activeStepId: current.activeStepId,
+              steps: current.steps.map(step =>
+                step.status === 'running' ? { ...step, status: 'done' as const } : step,
+              ),
+            },
+          };
+        });
+        window.dispatchEvent(new CustomEvent('conversation-created'));
+      };
+
+      xhr.send(
+        JSON.stringify({
+          conv_uid: currentConvId,
+          chat_mode: chatMode,
+          model_name: model,
+          user_input: finalQuery,
+          temperature: 0.6,
+          max_new_tokens: 4000,
+          select_param: appCode === 'chat_react_agent' ? '' : appCode,
+          ext_info: {
+            ...(currentUploadedFilePath ? { file_path: currentUploadedFilePath } : {}),
+            ...(effectiveSkill ? { skill_id: effectiveSkill.id, skill_name: effectiveSkill.name } : {}),
+            ...(effectiveDb ? { database_name: effectiveDb.db_name, database_type: effectiveDb.db_type } : {}),
+            ...(selectedKnowledge
+              ? { knowledge_space_name: selectedKnowledge.name, knowledge_space_id: selectedKnowledge.id }
+              : {}),
+          },
+        }),
+      );
     } catch (err: any) {
       setLoading(false);
-      message.error(err?.message || 'Failed to get response');
-      setMessages(prev => {
-        const newMessages = [...prev];
-        const lastMsg = newMessages[newMessages.length - 1];
-        if (lastMsg && lastMsg.role === 'view') {
-          lastMsg.context = err?.message || 'Error occurred';
-          lastMsg.thinking = false;
-        }
-        return newMessages;
-      });
+      xhrRef.current = null;
+      message.error(err?.message || 'Failed to send request');
     }
   };
 
@@ -1998,24 +2038,6 @@ const Playground: NextPage = () => {
       const errMessage = err instanceof Error ? err.message : 'Unknown error';
       message.error('加载示例失败: ' + errMessage);
     }
-  };
-
-  // Clear chat history
-  const handleClearChat = () => {
-    setMessages([]);
-    setConversationId(null);
-    setQuery('');
-    setExecutionMap({});
-    setActiveMessageId(null);
-    setActiveViewMsgId(null);
-    setUploadedFilePath(null);
-    setFilePreview(null);
-    setFilePreviewError(null);
-    setArtifacts([]);
-    setRightPanelTab('preview');
-    setStreamingSummary('');
-    setSummaryComplete(false);
-    router.push('/', undefined, { shallow: true });
   };
 
   const restoreFromHistory = (
@@ -2278,11 +2300,6 @@ const Playground: NextPage = () => {
                   {getDbIcon(selectedDb.type)} <span className='font-medium ml-1'>{selectedDb.db_name}</span>
                 </Tag>
               )}
-              {messages.length > 0 && (
-                <Button type='text' size='small' onClick={handleClearChat} className='text-gray-500'>
-                  Clear Chat
-                </Button>
-              )}
               <BellOutlined className='text-lg text-gray-500 cursor-pointer' />
               <div className='flex items-center gap-2 bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded-full text-xs font-medium'>
                 <ThunderboltOutlined className='text-yellow-500' /> <span>300</span>
@@ -2342,6 +2359,30 @@ const Playground: NextPage = () => {
               <div
                 className={`${rightPanelCollapsed ? 'flex-1 max-w-[800px] border-r-0' : 'flex-[2] min-w-0 border-r border-gray-200/80 dark:border-gray-800'} flex flex-col overflow-hidden bg-white dark:bg-[#111217] transition-all duration-300 relative`}
               >
+                {loading && (
+                  <div className='sticky top-0 z-50 flex items-center justify-center gap-3 px-4 py-2 bg-red-50/90 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 backdrop-blur-sm'>
+                    <span className='text-sm text-red-600 dark:text-red-400'>{t('platform_generating_answer')}</span>
+                    <Button
+                      danger
+                      size='small'
+                      icon={<span className='block w-3 h-3 bg-current rounded-sm' />}
+                      onClick={() => {
+                        stopRequestedRef.current = true;
+                        if (xhrRef.current) {
+                          xhrRef.current.abort();
+                        }
+                        conversationId &&
+                          fetch(`${process.env.API_BASE_URL ?? ''}/api/v1/chat/cancel/${conversationId}`, {
+                            method: 'POST',
+                            keepalive: true,
+                          }).catch(() => {});
+                      }}
+                      className='flex items-center gap-1 font-medium shadow-sm'
+                    >
+                      停止
+                    </Button>
+                  </div>
+                )}
                 <div className='flex-1 min-h-0 overflow-y-auto'>
                   {rounds.map((round, roundIndex) => {
                     const isLastRound = roundIndex === rounds.length - 1;
@@ -2766,36 +2807,57 @@ const Playground: NextPage = () => {
                               />
                             </Tooltip>
 
-                            {/* Send Button with blue gradient + gloss animation */}
-                            <Button
-                              type='primary'
-                              shape='circle'
-                              icon={<ArrowUpOutlined />}
-                              onClick={() => handleStart()}
-                              disabled={(!query.trim() && !uploadedFile) || loading}
-                              loading={loading}
-                              className={`group/send relative overflow-hidden border-none shadow-lg flex-shrink-0 h-9 w-9 transition-all duration-200 ${
-                                query.trim() || uploadedFile
-                                  ? 'bg-gradient-to-br from-[#3b82f6] to-[#2563eb] hover:shadow-blue-300/40 hover:shadow-xl hover:scale-105'
-                                  : 'bg-gray-200 text-gray-400'
-                              }`}
-                              style={
-                                query.trim() || uploadedFile
-                                  ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }
-                                  : undefined
-                              }
-                            >
-                              {(query.trim() || uploadedFile) && (
-                                <span
-                                  className='absolute inset-0 opacity-0 group-hover/send:opacity-100 transition-opacity duration-300 pointer-events-none'
-                                  style={{
-                                    background:
-                                      'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 45%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.25) 55%, transparent 60%)',
-                                    animation: 'glossSweepChat 1.8s ease-in-out infinite',
-                                  }}
-                                />
-                              )}
-                            </Button>
+                            {/* Stop / Send Button — always clickable, uses xhrRef for stop detection (not React state) */}
+                            <Tooltip title={loading ? '停止' : ''}>
+                              <Button
+                                type={loading ? 'default' : 'primary'}
+                                danger={loading}
+                                shape='circle'
+                                icon={
+                                  loading ? (
+                                    <span className='block w-3 h-3 bg-current rounded-sm' />
+                                  ) : (
+                                    <ArrowUpOutlined />
+                                  )
+                                }
+                                onClick={() => {
+                                  if (xhrRef.current) {
+                                    stopRequestedRef.current = true;
+                                    xhrRef.current.abort();
+                                    conversationId &&
+                                      fetch(`${process.env.API_BASE_URL ?? ''}/api/v1/chat/cancel/${conversationId}`, {
+                                        method: 'POST',
+                                        keepalive: true,
+                                      }).catch(() => {});
+                                  } else if (query.trim() || uploadedFile) {
+                                    handleStart();
+                                  }
+                                }}
+                                className={`group/send relative overflow-hidden flex-shrink-0 h-9 w-9 transition-all duration-200 ${
+                                  loading
+                                    ? 'flex items-center justify-center border-2 border-red-400 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
+                                    : query.trim() || uploadedFile
+                                      ? 'border-none shadow-lg bg-gradient-to-br from-[#3b82f6] to-[#2563eb] hover:shadow-blue-300/40 hover:shadow-xl hover:scale-105'
+                                      : 'border-none bg-gray-200 text-gray-400'
+                                }`}
+                                style={
+                                  !loading && (query.trim() || uploadedFile)
+                                    ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }
+                                    : undefined
+                                }
+                              >
+                                {!loading && (query.trim() || uploadedFile) && (
+                                  <span
+                                    className='absolute inset-0 opacity-0 group-hover/send:opacity-100 transition-opacity duration-300 pointer-events-none'
+                                    style={{
+                                      background:
+                                        'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 45%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.25) 55%, transparent 60%)',
+                                      animation: 'glossSweepChat 1.8s ease-in-out infinite',
+                                    }}
+                                  />
+                                )}
+                              </Button>
+                            </Tooltip>
                           </div>
                           <style
                             dangerouslySetInnerHTML={{
@@ -3446,37 +3508,54 @@ const Playground: NextPage = () => {
                             />
                           </Tooltip>
 
-                          {/* Send Button with blue gradient + gloss */}
-                          <Button
-                            type='primary'
-                            shape='circle'
-                            size='large'
-                            icon={<ArrowUpOutlined />}
-                            onClick={() => handleStart()}
-                            disabled={(!query.trim() && !uploadedFile) || loading}
-                            loading={loading}
-                            className={`group/send relative overflow-hidden border-none shadow-lg transition-all duration-200 ${
-                              query.trim() || uploadedFile
-                                ? 'bg-gradient-to-br from-[#3b82f6] to-[#2563eb] hover:shadow-blue-300/40 hover:shadow-xl hover:scale-105'
-                                : 'bg-gray-200 text-gray-400'
-                            }`}
-                            style={
-                              query.trim() || uploadedFile
-                                ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }
-                                : undefined
-                            }
-                          >
-                            {(query.trim() || uploadedFile) && (
-                              <span
-                                className='absolute inset-0 opacity-0 group-hover/send:opacity-100 transition-opacity duration-300 pointer-events-none'
-                                style={{
-                                  background:
-                                    'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 45%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.25) 55%, transparent 60%)',
-                                  animation: 'glossSweepHero 1.8s ease-in-out infinite',
-                                }}
-                              />
-                            )}
-                          </Button>
+                          {/* Stop / Send Button — always clickable, uses xhrRef for stop detection (not React state) */}
+                          <Tooltip title={loading ? '停止' : ''}>
+                            <Button
+                              type={loading ? 'default' : 'primary'}
+                              danger={loading}
+                              shape='circle'
+                              size='large'
+                              icon={
+                                loading ? <span className='block w-3 h-3 bg-current rounded-sm' /> : <ArrowUpOutlined />
+                              }
+                              onClick={() => {
+                                if (xhrRef.current) {
+                                  stopRequestedRef.current = true;
+                                  xhrRef.current.abort();
+                                  conversationId &&
+                                    fetch(`${process.env.API_BASE_URL ?? ''}/api/v1/chat/cancel/${conversationId}`, {
+                                      method: 'POST',
+                                      keepalive: true,
+                                    }).catch(() => {});
+                                } else if (query.trim() || uploadedFile) {
+                                  handleStart();
+                                }
+                              }}
+                              className={`group/send relative overflow-hidden transition-all duration-200 ${
+                                loading
+                                  ? 'flex-shrink-0 flex items-center justify-center border-2 border-red-400 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
+                                  : query.trim() || uploadedFile
+                                    ? 'flex-shrink-0 border-none shadow-lg bg-gradient-to-br from-[#3b82f6] to-[#2563eb] hover:shadow-blue-300/40 hover:shadow-xl hover:scale-105'
+                                    : 'flex-shrink-0 border-none bg-gray-200 text-gray-400'
+                              }`}
+                              style={
+                                !loading && (query.trim() || uploadedFile)
+                                  ? { background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }
+                                  : undefined
+                              }
+                            >
+                              {!loading && (query.trim() || uploadedFile) && (
+                                <span
+                                  className='absolute inset-0 opacity-0 group-hover/send:opacity-100 transition-opacity duration-300 pointer-events-none'
+                                  style={{
+                                    background:
+                                      'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.25) 45%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.25) 55%, transparent 60%)',
+                                    animation: 'glossSweepHero 1.8s ease-in-out infinite',
+                                  }}
+                                />
+                              )}
+                            </Button>
+                          </Tooltip>
                         </div>
                         <style
                           dangerouslySetInnerHTML={{

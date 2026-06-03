@@ -1,12 +1,10 @@
 import { apiInterceptors, login } from '@/client/api';
 import { STORAGE_TOKEN_KEY, STORAGE_USERINFO_KEY, STORAGE_USERINFO_VALID_TIME_KEY } from '@/utils/constants/index';
 import { Button, Form, Input, message } from 'antd';
-import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export default function LoginForm() {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const { t } = useTranslation();
 
@@ -37,7 +35,7 @@ export default function LoginForm() {
         );
         localStorage.setItem(STORAGE_USERINFO_VALID_TIME_KEY, Date.now().toString());
         message.success(t('login_success'));
-        router.replace('/');
+        window.location.href = '/';
       }
     } finally {
       setLoading(false);

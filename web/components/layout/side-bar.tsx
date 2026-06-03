@@ -344,6 +344,13 @@ function SideBar() {
     fetchDialogueList();
   }, [fetchDialogueList]);
 
+  // Listen for new conversation events to refresh the list
+  useEffect(() => {
+    const handler = () => fetchDialogueList();
+    window.addEventListener('conversation-created', handler);
+    return () => window.removeEventListener('conversation-created', handler);
+  }, [fetchDialogueList]);
+
   // ============ COLLAPSED SIDEBAR ============
   if (!isMenuExpand) {
     return (

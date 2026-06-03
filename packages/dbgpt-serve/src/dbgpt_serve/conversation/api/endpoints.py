@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from dbgpt.component import SystemApp
 from dbgpt.util import PaginationResult
 from dbgpt_serve.core import Result
+from dbgpt_serve.utils.auth import UserRequest, get_user_from_headers
 
 from ..config import SERVE_SERVICE_COMPONENT_NAME, ServeConfig
 from ..service.service import Service
@@ -132,8 +133,9 @@ async def dialogue_new(
     user_name: str = None,
     user_id: str = None,
     sys_code: str = None,
+    user_token: UserRequest = Depends(get_user_from_headers),
 ):
-    user_name = user_name or user_id
+    user_name = user_name or user_id or user_token.user_name or user_token.user_id
     unique_id = uuid.uuid1()
     res = ServerResponse(
         user_input="",
@@ -189,6 +191,7 @@ async def query_page(
     page: Optional[int] = Query(default=1, description="current page"),
     page_size: Optional[int] = Query(default=10, description="page size"),
     service: Service = Depends(get_service),
+    user_token: UserRequest = Depends(get_user_from_headers),
 ) -> Result[PaginationResult[ServerResponse]]:
     """Query Conversation entities
 
@@ -200,6 +203,8 @@ async def query_page(
     Returns:
         ServerResponse: The response
     """
+    if user_token.user_name and not request.user_name:
+        request.user_name = user_token.user_name
     return Result.succ(service.get_list_by_page(request, page, page_size))
 
 
@@ -215,10 +220,12 @@ async def list_latest_conv(
     page: Optional[int] = Query(default=1, description="current page"),
     page_size: Optional[int] = Query(default=10, description="page size"),
     service: Service = Depends(get_service),
+    user_token: UserRequest = Depends(get_user_from_headers),
 ) -> Result[List[ServerResponse]]:
     """Return latest conversations"""
+    effective_user = user_name or user_id or user_token.user_name or user_token.user_id
     request = ServeRequest(
-        user_name=user_name or user_id,
+        user_name=effective_user,
         sys_code=sys_code,
     )
     return Result.succ(service.get_list_by_page(request, page, page_size).items)
@@ -246,6 +253,7 @@ async def export_all_messages(
         "file", description="response format(file or json)"
     ),
     service: Service = Depends(get_service),
+    user_token: UserRequest = Depends(get_user_from_headers),
 ):
     """Export all conversations and messages for a user
 
@@ -260,8 +268,9 @@ async def export_all_messages(
         A dictionary containing all conversations and their messages
     """
     # 1. Get all conversations for the user
+    effective_user = user_name or user_id or user_token.user_name or user_token.user_id
     request = ServeRequest(
-        user_name=user_name or user_id,
+        user_name=effective_user,
         sys_code=sys_code,
     )
 
